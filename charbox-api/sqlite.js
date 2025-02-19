@@ -69,8 +69,10 @@ const init_db = async () => {
         picture_id INTEGER NOT NULL REFERENCES pictures(id)
       )`
     )
+    await execute(db, "PRAGMA foreign_keys = ON;")
   } catch (error) {
     console.error(error)
+    throw error
   } finally {
     db.close()
   }
@@ -83,6 +85,7 @@ const get_chars = async () => {
     return await fetchAll(db, "SELECT * FROM chars")
   } catch (error) {
     console.error(error)
+    throw error
   } finally {
     db.close()
   }
@@ -96,7 +99,10 @@ const add_char = async (args) => {
     return true
   } catch (error) {
     console.error(error)
-    return false
+    if (error.message.includes("UNIQUE")) {
+      throw new Error("Name already exists")
+    }
+    throw error
   } finally {
     db.close()
   }
@@ -117,6 +123,7 @@ const get_images = async (args) => {
     ])
   } catch (error) {
     console.error(error)
+    throw error
   } finally {
     db.close()
   }
@@ -124,6 +131,7 @@ const get_images = async (args) => {
 
 // Get images for a specific character
 const get_images_for_char = async (args) => {
+  if (!args.char_id) throw new Error("char_id is required")
   const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
   let query = `SELECT * FROM pictures JOIN chars_pictures ON pictures.id=chars_pictures.picture_id WHERE chars_pictures.char_id=?`
   if (!args.nsfw) {
@@ -132,12 +140,13 @@ const get_images_for_char = async (args) => {
   query += " LIMIT ? OFFSET ?"
   try {
     return await fetchAll(db, query, [
-      args.char_id || null,
+      args.char_id,
       args.limit || 50,
       args.page ? args.page * (args.limit || 50) : 0,
     ])
   } catch (error) {
     console.error(error)
+    throw error
   } finally {
     db.close()
   }
@@ -150,8 +159,8 @@ const add_image = async (args) => {
       db,
       `INSERT INTO pictures (
         name, nsfw, url
-      ) VALUES (?, ?)`,
-      [args.name, args.nsfw || false, args.image_url]
+      ) VALUES (?, ?, ?)`,
+      [args.name, args.nsfw ? 1 : 0, args.image_url]
     )
     for (const char_id of args.char_ids) {
       await execute(
@@ -166,7 +175,10 @@ const add_image = async (args) => {
     return true
   } catch (error) {
     console.error(error)
-    return false
+    if (error.message.includes("UNIQUE")) {
+      throw new Error("Name already exists")
+    }
+    throw error
   } finally {
     db.close()
   }
