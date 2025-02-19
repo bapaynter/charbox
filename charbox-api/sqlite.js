@@ -135,7 +135,7 @@ const get_images_for_char = async (args) => {
   const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
   let query = `SELECT * FROM pictures JOIN chars_pictures ON pictures.id=chars_pictures.picture_id WHERE chars_pictures.char_id=?`
   if (!args.nsfw) {
-    query = ` AND nsfw=0`
+    query += ` AND nsfw=0`
   }
   query += " LIMIT ? OFFSET ?"
   try {
