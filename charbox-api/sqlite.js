@@ -1,5 +1,27 @@
 import sqlite3 from "sqlite3"
 
+// connection helpers
+let dbInstance = null
+export const getDB = async () => {
+  if (!dbInstance) {
+    dbInstance = new sqlite3.Database(
+      "charbox.db",
+      sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE
+    )
+    await execute(dbInstance, "PRAGMA foreign_keys = ON;")
+  }
+  return dbInstance
+}
+
+const withDB = async (operation) => {
+  const db = await getDB() // Reused connection
+  try {
+    return await operation(db)
+  } finally {
+    // Optionally close if needed
+  }
+}
+
 // Helper functions for sqlite
 export const fetchAll = async (db, sql, params) => {
   return new Promise((resolve, reject) => {
@@ -79,82 +101,47 @@ const init_db = async () => {
 }
 
 // Get all characters
-const get_chars = async () => {
-  const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
-  try {
-    return await fetchAll(db, "SELECT * FROM chars")
-  } catch (error) {
-    console.error(error)
-    throw error
-  } finally {
-    db.close()
-  }
-}
+const get_chars = async () =>
+  withDB((db) => fetchAll(db, "SELECT * FROM chars"))
 
 // Add a character to the database
-const add_char = async (args) => {
-  const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
-  try {
-    await execute(db, `INSERT INTO chars (name) VALUES (?)`, [args.name])
-    return true
-  } catch (error) {
-    console.error(error)
-    if (error.message.includes("UNIQUE")) {
-      throw new Error("Name already exists")
-    }
-    throw error
-  } finally {
-    db.close()
-  }
-}
+const add_char = async (args) =>
+  withDB((db) =>
+    execute(db, `INSERT INTO chars (name) VALUES (?)`, [args.name])
+  )
 
 // Get paginated images with optional nsfw filter
-const get_images = async (args) => {
-  const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
-  let query = `SELECT * FROM pictures`
-  if (!args.nsfw) {
-    query += ` WHERE nsfw=0`
-  }
-  query += " LIMIT ? OFFSET ?"
-  try {
-    return await fetchAll(db, query, [
+const get_images = async (args) =>
+  withDB((db) => {
+    let query = `SELECT * FROM pictures`
+    if (!args.nsfw) {
+      query += ` WHERE nsfw=0`
+    }
+    query += " LIMIT ? OFFSET ?"
+    fetchAll(db, query, [
       args.limit || 50,
       args.page ? args.page * (args.limit || 50) : 0,
     ])
-  } catch (error) {
-    console.error(error)
-    throw error
-  } finally {
-    db.close()
-  }
-}
+  })
 
 // Get images for a specific character
-const get_images_for_char = async (args) => {
-  if (!args.char_id) throw new Error("char_id is required")
-  const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
-  let query = `SELECT * FROM pictures JOIN chars_pictures ON pictures.id=chars_pictures.picture_id WHERE chars_pictures.char_id=?`
-  if (!args.nsfw) {
-    query += ` AND nsfw=0`
-  }
-  query += " LIMIT ? OFFSET ?"
-  try {
-    return await fetchAll(db, query, [
+
+const get_images_for_char = async (args) =>
+  withDB((db) => {
+    let query = `SELECT * FROM pictures JOIN chars_pictures ON pictures.id=chars_pictures.picture_id WHERE chars_pictures.char_id=?`
+    if (!args.nsfw) {
+      query += ` AND nsfw=0`
+    }
+    query += " LIMIT ? OFFSET ?"
+    fetchAll(db, query, [
       args.char_id,
       args.limit || 50,
       args.page ? args.page * (args.limit || 50) : 0,
     ])
-  } catch (error) {
-    console.error(error)
-    throw error
-  } finally {
-    db.close()
-  }
-}
+  })
 
-const add_image = async (args) => {
-  const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
-  try {
+const add_image = async (args) =>
+  withDB(async (db) => {
     const picture_id = await execute(
       db,
       `INSERT INTO pictures (
@@ -162,28 +149,14 @@ const add_image = async (args) => {
       ) VALUES (?, ?, ?)`,
       [args.name, args.nsfw ? 1 : 0, args.image_url]
     )
-    for (const char_id of args.char_ids) {
-      await execute(
-        db,
-        `INSERT INTO chars_pictures (
-        char_id, picture_id
-      ) VALUES (?, ?)`,
-        [char_id, picture_id]
-      )
-    }
-
-    return true
-  } catch (error) {
-    console.error(error)
-    if (error.message.includes("UNIQUE")) {
-      throw new Error("Name already exists")
-    }
-    throw error
-  } finally {
-    db.close()
-  }
-}
-
+    await execute(
+      db,
+      `INSERT INTO chars_pictures (char_id, picture_id) VALUES ${args.char_ids
+        .map(() => "(?, ?)")
+        .join(",")}`,
+      args.char_ids.flatMap((id) => [id, picture_id])
+    )
+  })
 export default {
   get_chars,
   add_char,
