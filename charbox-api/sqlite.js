@@ -40,13 +40,16 @@ const execute = async (db, sql, params = []) => {
 
 // Initialize the database
 const init_db = async () => {
-  const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
+  const db = new sqlite3.Database(
+    "charbox.db",
+    sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE
+  )
   try {
     await execute(
       db,
       `CREATE TABLE IF NOT EXISTS chars (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL UNIQUE
       )`
     )
     await execute(
@@ -55,7 +58,7 @@ const init_db = async () => {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         url TEXT NOT NULL,
-        nsfw BOOLEAN DEFAULT FALSE,
+        nsfw BOOLEAN DEFAULT FALSE
       )`
     )
     await execute(
@@ -63,7 +66,7 @@ const init_db = async () => {
       `CREATE TABLE IF NOT EXISTS chars_pictures (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         char_id INTEGER NOT NULL REFERENCES chars(id),
-        picture_id INTEGER NOT NULL REFERENCES pictures(id),
+        picture_id INTEGER NOT NULL REFERENCES pictures(id)
       )`
     )
   } catch (error) {
@@ -104,7 +107,7 @@ const get_images = async (args) => {
   const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
   let query = `SELECT * FROM pictures`
   if (!args.nsfw) {
-    query = ` WHERE nsfw=0`
+    query += ` WHERE nsfw=0`
   }
   query += " LIMIT ? OFFSET ?"
   try {
@@ -128,7 +131,11 @@ const get_images_for_char = async (args) => {
   }
   query += " LIMIT ? OFFSET ?"
   try {
-    return await fetchAll(db, query, [args.char_id || null])
+    return await fetchAll(db, query, [
+      args.char_id || null,
+      args.limit || 50,
+      args.page ? args.page * (args.limit || 50) : 0,
+    ])
   } catch (error) {
     console.error(error)
   } finally {
@@ -139,22 +146,22 @@ const get_images_for_char = async (args) => {
 const add_image = async (args) => {
   const db = new sqlite3.Database("charbox.db", sqlite3.OPEN_READWRITE)
   try {
-    let [picture_id] = await execute(
+    const picture_id = await execute(
       db,
       `INSERT INTO pictures (
-        nsfw, image_url
+        name, nsfw, url
       ) VALUES (?, ?)`,
-      [args.nsfw || false, args.image_url]
+      [args.name, args.nsfw || false, args.image_url]
     )
-    args.char_ids.forEach((char_id) => {
-      execute(
+    for (const char_id of args.char_ids) {
+      await execute(
         db,
         `INSERT INTO chars_pictures (
-          picture_id, char_id
-        ) VALUES (?, ?)`,
+        char_id, picture_id
+      ) VALUES (?, ?)`,
         [char_id, picture_id]
       )
-    })
+    }
 
     return true
   } catch (error) {
