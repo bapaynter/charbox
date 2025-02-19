@@ -1,10 +1,15 @@
 const express = require("express")
-const fs = require("node:fs")
 var busboy = require("connect-busboy") //mid
 var path = require("path") //used for file path
 var fs = require("fs-extra") //File System - for file manipulationdleware for form/file upload
 const app = express()
 const port = 3000
+const sanitize = require("sanitize-filename")
+
+const cors = require("cors")
+app.use(cors())
+
+app.use(express.json())
 
 import * as db from "./sqlite.js"
 
@@ -32,7 +37,7 @@ app.post("/api/chars", (req, res) => {
 })
 
 // Getting images with various params
-app.get("/api/images", (req, res) => {
+app.get("/api/images/:char_id/:page", (req, res) => {
   db.get_images({ ...req.params, ...req.query }).then((images) => {
     res.json(images)
   })
@@ -42,13 +47,7 @@ app.get("/api/images/:char_id", (req, res) => {
     res.json(images)
   })
 })
-
-app.get("/api/images/:char_id/:page", (req, res) => {
-  db.get_images({ ...req.params, ...req.query }).then((images) => {
-    res.json(images)
-  })
-})
-app.get("/api/images/:char_id/:page/:limit", (req, res) => {
+app.get("/api/images", (req, res) => {
   db.get_images({ ...req.params, ...req.query }).then((images) => {
     res.json(images)
   })
@@ -56,39 +55,66 @@ app.get("/api/images/:char_id/:page/:limit", (req, res) => {
 
 app.post(
   "/api/images/upload",
-  (req, res, next) => {
-    var fstream
-    req.pipe(req.busboy)
-    req.busboy.on("file", function (fieldname, file, filename) {
-      filename = Date.now() + filename
-      console.log("Uploading: " + filename)
+  busboy(), // Add busboy middleware
+  async (req, res, next) => {
+    try {
+      const formData = {}
+      let fileProcessed = false
+      let fieldsProcessed = false
 
-      //Path where image will be uploaded
-      fstream = fs.createWriteStream(__dirname + "/img/" + filename)
-      file.pipe(fstream)
-      fstream.on("close", function () {
-        console.log("Upload Finished of " + filename)
-        res.locals.filename = filename
-        next()
-      })
-    })
+      req.busboy
+        .on("field", (name, val) => {
+          formData[name] = val
+        })
+        .on("file", async (fieldname, file, filename) => {
+          try {
+            filename = Date.now() + "-" + sanitize(filename)
+            await fs.ensureDir(path.join(__dirname, "img"))
+
+            const fullPath = path.join(__dirname, "img", filename)
+            const fstream = fs.createWriteStream(fullPath)
+
+            file.pipe(fstream)
+
+            fstream.on("finish", () => {
+              res.locals.filename = filename
+              fileProcessed = true
+              if (fieldsProcessed) next()
+            })
+          } catch (err) {
+            console.error("Upload error:", err)
+            res.sendStatus(500)
+          }
+        })
+        .on("close", () => {
+          fieldsProcessed = true
+          res.locals.formData = formData
+          if (fileProcessed) next()
+        })
+
+      req.pipe(req.busboy)
+    } catch (err) {
+      next(err)
+    }
   },
-  (req, res) => {
-    const image_url = `/img/${res.locals.filename}`
-    const success = db.add_image({
-      char_ids: req.params.char_ids,
-      nsfw: !!req.params.nsfw,
-      image_url,
-    })
-    if (success) {
+  async (req, res) => {
+    try {
+      const image_url = `/img/${res.locals.filename}`
+      const image_data = await db.add_image({
+        char_ids: res.locals.formData.char_ids,
+        nsfw: !!res.locals.formData.nsfw,
+        image_url,
+      })
       res.status(201).json(image_data)
-    } else {
-      res.sendStatus(409)
+    } catch (err) {
+      console.error("Database error:", err)
+      res.sendStatus(500)
     }
   }
 )
 
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-  db.init_db()
+db.init_db().then(() => {
+  app.listen(port, () => {
+    console.log(`Example app listening on port ${port}`)
+  })
 })
